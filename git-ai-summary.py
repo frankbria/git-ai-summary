@@ -83,6 +83,7 @@ class Config:
     max_retries: int
     log_level: str
     correlation_id: str
+    config_file: Optional[str]  # Path to loaded .env file
 
 
 class AIProvider(Protocol):
@@ -94,8 +95,53 @@ class AIProvider(Protocol):
 
 
 def load_config(provider: Optional[str] = None, model: Optional[str] = None) -> Config:
-    """Load configuration from environment and CLI arguments."""
-    load_dotenv()
+    """Load configuration from environment and CLI arguments.
+    
+    Searches for .env file in the following order:
+    1. Current directory (.env)
+    2. Git repository root (.env)
+    3. User config directory (~/.config/git-ai-summary/.env)
+    4. Script's installation directory
+    """
+    # Try to find .env file in multiple locations
+    env_locations = [
+        Path.cwd() / ".env",  # Current directory
+    ]
+    
+    # Try to find git repository root
+    try:
+        git_root = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        if git_root.returncode == 0 and git_root.stdout.strip():
+            git_root_path = Path(git_root.stdout.strip())
+            if git_root_path != Path.cwd():
+                env_locations.append(git_root_path / ".env")
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        pass
+    
+    # User config directory
+    config_dir = Path.home() / ".config" / "git-ai-summary"
+    env_locations.append(config_dir / ".env")
+    
+    # Script's directory (for installed version)
+    script_dir = Path(__file__).parent
+    env_locations.append(script_dir / ".env")
+    
+    # Load from the first .env file found
+    env_file_loaded = None
+    for env_path in env_locations:
+        if env_path.exists():
+            load_dotenv(env_path)
+            env_file_loaded = env_path
+            break
+    
+    # If no .env found, just load from environment
+    if not env_file_loaded:
+        load_dotenv()
     
     # Determine provider
     provider_str = provider or os.getenv("DEFAULT_AI_PROVIDER", "anthropic")
@@ -155,7 +201,8 @@ def load_config(provider: Optional[str] = None, model: Optional[str] = None) -> 
         timeout=int(os.getenv("AI_TIMEOUT_SECONDS", "30")),
         max_retries=int(os.getenv("AI_MAX_RETRIES", "2")),
         log_level=os.getenv("AI_LOG_LEVEL", "INFO"),
-        correlation_id=str(uuid.uuid4())
+        correlation_id=str(uuid.uuid4()),
+        config_file=str(env_file_loaded) if env_file_loaded else None
     )
     
     # Validate required API keys
@@ -833,6 +880,11 @@ Configuration:
             level=getattr(logging, config.log_level.upper()),
             format=f'%(asctime)s - [{config.correlation_id[:8]}] - %(levelname)s - %(message)s'
         )
+        logger = logging.getLogger(__name__)
+        if config.config_file:
+            logger.debug(f"Loaded configuration from: {config.config_file}")
+        else:
+            logger.debug("No .env file found, using environment variables only")
     except ValueError as e:
         print(f"Configuration error: {e}", file=sys.stderr)
         sys.exit(1)

@@ -1,0 +1,37 @@
+# Test installation on Ubuntu 22.04 with zsh
+FROM ubuntu:22.04
+
+# Prevent interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install dependencies including zsh
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    python3-venv \
+    git \
+    curl \
+    zsh \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create test user with zsh
+RUN useradd -m -s /bin/zsh testuser
+
+# Switch to test user
+USER testuser
+WORKDIR /home/testuser
+ENV SHELL=/bin/zsh
+
+# Copy git-ai-summary source
+COPY --chown=testuser:testuser . /home/testuser/git-ai-summary
+
+# Run installation
+RUN cd git-ai-summary && ./install.sh
+
+# Verify installation
+RUN /bin/zsh -c "source ~/.zshrc && git-ai-summary --help"
+
+# Test from different directory
+RUN cd /tmp && git-ai-summary --help
+
+CMD ["/bin/zsh"]

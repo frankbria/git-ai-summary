@@ -11,10 +11,41 @@ Analyze recent git changes using AI providers of your choice. Supports multiple 
 - **Clipboard Integration**: Copy prompts or results directly to clipboard
 - **Retry Logic**: Built-in retry mechanism with exponential backoff
 - **Structured Logging**: Correlation IDs for request tracking
+- **Robust Installation** (v1.1): Pre-flight checks, shell auto-detection, atomic rollback
+
+## Documentation
+
+- **[README.md](README.md)** - This file (user guide and quick start)
+- **[INSTALL.md](INSTALL.md)** - Detailed installation guide with troubleshooting
+- **[REQUIREMENTS.md](REQUIREMENTS.md)** - Functional and non-functional requirements
+- **[PRD.md](PRD.md)** - Product roadmap and feature planning (v1.1+)
+- **[TESTING.md](TESTING.md)** - Testing strategy and implementation guide
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** - Design decisions and architecture
+- **[WORKFLOW.md](WORKFLOW.md)** - Implementation workflow for v1.1
+- **[CLAUDE.md](CLAUDE.md)** - Developer guide for Claude Code
 
 ## Installation
 
-### Option 1: Virtual Environment (Recommended)
+### Option 1: System-wide Installation (Recommended)
+
+For system-wide access from any directory:
+
+```bash
+./install.sh
+```
+
+**New in v1.1**: Enhanced installation with:
+- ✅ Pre-flight checks (Python 3.8+, Git, disk space, permissions)
+- ✅ Automatic shell detection (bash, zsh, fish)
+- ✅ Atomic installation with rollback on failure
+- ✅ Post-install validation
+- ✅ Detailed installation logging
+
+This creates `~/bin/git-ai-summary` and sets up `~/.config/git-ai-summary/.env` for global configuration.
+
+See [INSTALL.md](INSTALL.md) for detailed installation instructions, configuration scenarios, and troubleshooting.
+
+### Option 2: Local Virtual Environment
 
 ```bash
 # Create and activate virtual environment
