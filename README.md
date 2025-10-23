@@ -12,6 +12,10 @@ Analyze recent git changes using AI providers of your choice. Supports multiple 
 - **Retry Logic**: Built-in retry mechanism with exponential backoff
 - **Structured Logging**: Correlation IDs for request tracking
 - **Robust Installation** (v1.1): Pre-flight checks, shell auto-detection, atomic rollback
+- **Health Check** (v1.1): Verify configuration and connectivity
+- **Dry-Run Mode** (v1.1): Preview prompts and estimate costs before API calls
+- **Config Validation** (v1.1): Validate configuration syntax without network calls
+- **Version Info** (v1.1): Display version information
 
 ## Documentation
 
@@ -99,6 +103,24 @@ OPENAI_API_KEY=your_key_here
 ## Usage
 
 > 💡 **New to clipboard options?** See [CLIPBOARD_GUIDE.md](CLIPBOARD_GUIDE.md) for detailed workflows and examples.
+
+### Diagnostic Commands (v1.1)
+
+Before running analysis, validate your configuration:
+
+```bash
+# Check version
+./git-ai-summary.py --version
+
+# Validate configuration file
+./git-ai-summary.py --validate-config --provider anthropic
+
+# Test connectivity and verify setup
+./git-ai-summary.py --health-check --provider anthropic
+
+# Preview prompt and estimate cost (no API call made)
+./git-ai-summary.py --dry-run --provider anthropic
+```
 
 ### Basic Usage
 

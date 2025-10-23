@@ -4,6 +4,8 @@
 git-ai-summary.py - Summarize recent git changes using AI
 """
 
+__version__ = "1.1.0"
+
 import subprocess
 import sys
 import json
@@ -37,7 +39,7 @@ class Config:
     """Configuration for AI providers and global settings."""
     provider: ProviderType
     model: Optional[str]
-    
+
     # API Keys
     openai_api_key: Optional[str]
     anthropic_api_key: Optional[str]
@@ -46,7 +48,7 @@ class Config:
     cohere_api_key: Optional[str]
     mistral_api_key: Optional[str]
     litellm_api_key: Optional[str]
-    
+
     # Base URLs
     openai_base_url: str
     anthropic_base_url: str
@@ -56,7 +58,7 @@ class Config:
     mistral_base_url: str
     ollama_base_url: str
     litellm_base_url: str
-    
+
     # Provider-specific models
     openai_model: str
     anthropic_model: str
@@ -67,23 +69,110 @@ class Config:
     ollama_model: str
     litellm_model: str
     llm_model: str
-    
+
     # OpenRouter specific
     openrouter_site_url: str
     openrouter_app_name: str
-    
+
     # LiteLLM specific
     litellm_mode: str
-    
+
     # LLM CLI specific
     llm_extra_args: str
-    
+
     # Global settings
     timeout: int
     max_retries: int
     log_level: str
     correlation_id: str
     config_file: Optional[str]  # Path to loaded .env file
+
+
+# Provider pricing data (prices per million tokens, as of January 2025)
+# Note: Prices are approximate and should be verified from official sources
+PROVIDER_PRICING = {
+    "openai": {
+        "gpt-4o": {"input": 2.50, "output": 10.00},
+        "gpt-4o-mini": {"input": 0.15, "output": 0.60},
+        "gpt-4-turbo": {"input": 10.00, "output": 30.00},
+        "gpt-4": {"input": 30.00, "output": 60.00},
+        "gpt-3.5-turbo": {"input": 0.50, "output": 1.50},
+    },
+    "anthropic": {
+        "claude-3-5-sonnet-latest": {"input": 3.00, "output": 15.00},
+        "claude-3-5-sonnet-20241022": {"input": 3.00, "output": 15.00},
+        "claude-3-5-sonnet-20240620": {"input": 3.00, "output": 15.00},
+        "claude-3-opus-latest": {"input": 15.00, "output": 75.00},
+        "claude-3-sonnet-20240229": {"input": 3.00, "output": 15.00},
+        "claude-3-haiku-20240307": {"input": 0.25, "output": 1.25},
+        "claude-4-5-sonnet": {"input": 3.00, "output": 15.00},  # Assuming same as 3.5
+    },
+    "gemini": {
+        "gemini-1.5-flash": {"input": 0.075, "output": 0.30},
+        "gemini-1.5-pro": {"input": 1.25, "output": 5.00},
+        "gemini-1.0-pro": {"input": 0.50, "output": 1.50},
+    },
+    "cohere": {
+        "command-r-plus": {"input": 3.00, "output": 15.00},
+        "command-r": {"input": 0.50, "output": 1.50},
+        "command": {"input": 1.00, "output": 2.00},
+        "command-light": {"input": 0.30, "output": 0.60},
+    },
+    "mistral": {
+        "mistral-large-latest": {"input": 3.00, "output": 9.00},
+        "mistral-medium-latest": {"input": 2.70, "output": 8.10},
+        "mistral-small-latest": {"input": 0.20, "output": 0.60},
+        "open-mistral-7b": {"input": 0.25, "output": 0.25},
+    },
+    "openrouter": {
+        # OpenRouter pricing varies by model, these are common examples
+        "anthropic/claude-3.5-sonnet": {"input": 3.00, "output": 15.00},
+        "openai/gpt-4o": {"input": 2.50, "output": 10.00},
+        "google/gemini-flash-1.5": {"input": 0.075, "output": 0.30},
+    },
+    "ollama": {
+        # Ollama is local, so it's free but we can estimate compute cost
+        "default": {"input": 0.00, "output": 0.00},
+    },
+    "litellm": {
+        # LiteLLM pricing depends on underlying provider
+        "default": {"input": 0.00, "output": 0.00},  # Proxy mode
+    },
+    "llm": {
+        # LLM CLI pricing depends on configured provider
+        "default": {"input": 0.00, "output": 0.00},
+    },
+}
+
+
+def estimate_token_count(text: str) -> int:
+    """Rough token count estimation (approximately 4 characters per token)."""
+    return len(text) // 4
+
+
+def estimate_cost(provider: str, model: str, input_tokens: int, output_tokens: int = 0) -> dict:
+    """Estimate the cost of an API call.
+
+    Returns:
+        dict with 'input_cost', 'output_cost', 'total_cost', and 'currency'
+    """
+    pricing = PROVIDER_PRICING.get(provider, {})
+    model_pricing = pricing.get(model, pricing.get("default", {"input": 0.00, "output": 0.00}))
+
+    # Calculate costs (prices are per million tokens)
+    input_cost = (input_tokens / 1_000_000) * model_pricing["input"]
+    output_cost = (output_tokens / 1_000_000) * model_pricing["output"]
+    total_cost = input_cost + output_cost
+
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "input_cost": input_cost,
+        "output_cost": output_cost,
+        "total_cost": total_cost,
+        "currency": "USD",
+        "pricing_available": model in pricing,
+    }
 
 
 class AIProvider(Protocol):
@@ -827,12 +916,365 @@ def make_provider(config: Config, logger: logging.Logger) -> AIProvider:
 def send_to_ai(config: Config, system_prompt: str, user_prompt: str) -> str:
     """Send prompts to configured AI provider and get response."""
     logger = logging.getLogger(__name__)
-    
+
     logger.info(f"[{config.correlation_id}] Using provider: {config.provider}")
     logger.info(f"[{config.correlation_id}] Timeout: {config.timeout}s, Max retries: {config.max_retries}")
-    
+
     provider = make_provider(config, logger)
     return provider.generate(system_prompt, user_prompt)
+
+
+def validate_config(config: Config) -> int:
+    """Validate configuration file syntax and required variables.
+
+    Returns:
+        0 if configuration is valid
+        1 if configuration has errors
+    """
+    errors = 0
+    warnings = 0
+
+    print("=== Configuration Validation ===\n")
+
+    # Check 1: Configuration file loaded
+    if config.config_file:
+        print(f"✓ Configuration file: {config.config_file}")
+    else:
+        print(f"⚠ Warning: No .env file found, using environment variables only")
+        warnings += 1
+
+    # Check 2: Provider validation
+    valid_providers = ("openai", "anthropic", "ollama", "openrouter", "gemini", "cohere", "mistral", "litellm", "llm")
+    if config.provider in valid_providers:
+        print(f"✓ Provider '{config.provider}' is valid")
+    else:
+        print(f"✗ Error: Invalid provider '{config.provider}'")
+        print(f"  → Valid providers: {', '.join(valid_providers)}")
+        errors += 1
+
+    # Check 3: API Key requirements
+    key_requirements = {
+        "openai": "OPENAI_API_KEY",
+        "anthropic": "ANTHROPIC_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
+        "gemini": "GOOGLE_API_KEY",
+        "cohere": "COHERE_API_KEY",
+        "mistral": "MISTRAL_API_KEY",
+    }
+
+    if config.provider in key_requirements:
+        required_key = key_requirements[config.provider]
+        key_value = getattr(config, required_key.lower(), None)
+        if key_value:
+            print(f"✓ Required API key '{required_key}' is set")
+        else:
+            print(f"✗ Error: Required API key '{required_key}' is missing")
+            errors += 1
+    elif config.provider in ("ollama", "llm"):
+        print(f"✓ No API key required for '{config.provider}'")
+    elif config.provider == "litellm":
+        if config.litellm_mode == "http" and not config.litellm_api_key:
+            print(f"⚠ Warning: LITELLM_API_KEY not set for HTTP mode")
+            warnings += 1
+        else:
+            print(f"✓ LiteLLM configuration valid for mode '{config.litellm_mode}'")
+
+    # Check 4: Model configuration
+    model_map = {
+        "openai": config.model or config.openai_model,
+        "anthropic": config.model or config.anthropic_model,
+        "ollama": config.model or config.ollama_model,
+        "openrouter": config.model or config.openrouter_model,
+        "gemini": config.model or config.gemini_model,
+        "cohere": config.model or config.cohere_model,
+        "mistral": config.model or config.mistral_model,
+        "litellm": config.model or config.litellm_model,
+        "llm": config.model or config.llm_model,
+    }
+    selected_model = model_map.get(config.provider)
+    if selected_model:
+        print(f"✓ Model configured: {selected_model}")
+    else:
+        print(f"⚠ Warning: No model configured for provider '{config.provider}'")
+        warnings += 1
+
+    # Check 5: Base URL configuration
+    base_url_map = {
+        "openai": config.openai_base_url,
+        "anthropic": config.anthropic_base_url,
+        "ollama": config.ollama_base_url,
+        "openrouter": config.openrouter_base_url,
+        "gemini": config.gemini_base_url,
+        "cohere": config.cohere_base_url,
+        "mistral": config.mistral_base_url,
+        "litellm": config.litellm_base_url,
+    }
+    if config.provider in base_url_map:
+        base_url = base_url_map[config.provider]
+        if base_url:
+            print(f"✓ Base URL: {base_url}")
+            # Basic URL validation
+            if not base_url.startswith(("http://", "https://")):
+                print(f"  ⚠ Warning: Base URL should start with http:// or https://")
+                warnings += 1
+        else:
+            print(f"✗ Error: Base URL not configured for provider '{config.provider}'")
+            errors += 1
+
+    # Check 6: Timeout and retry settings
+    if config.timeout > 0:
+        print(f"✓ Timeout: {config.timeout}s")
+    else:
+        print(f"✗ Error: Invalid timeout value: {config.timeout}")
+        errors += 1
+
+    if config.max_retries >= 0:
+        print(f"✓ Max retries: {config.max_retries}")
+    else:
+        print(f"✗ Error: Invalid max_retries value: {config.max_retries}")
+        errors += 1
+
+    # Check 7: Log level
+    valid_log_levels = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+    if config.log_level.upper() in valid_log_levels:
+        print(f"✓ Log level: {config.log_level.upper()}")
+    else:
+        print(f"⚠ Warning: Invalid log level '{config.log_level}', using INFO")
+        print(f"  → Valid levels: {', '.join(valid_log_levels)}")
+        warnings += 1
+
+    # Summary
+    print(f"\n=== Validation Summary ===")
+    print(f"Errors: {errors}")
+    print(f"Warnings: {warnings}")
+
+    if errors == 0 and warnings == 0:
+        print(f"\n✓ Configuration is valid and ready to use!")
+        return 0
+    elif errors == 0:
+        print(f"\n✓ Configuration is valid with {warnings} warning(s)")
+        return 0
+    else:
+        print(f"\n✗ Configuration has {errors} error(s). Please fix before using.")
+        return 1
+
+
+def health_check(config: Config) -> int:
+    """Verify configuration and connectivity without making full API calls.
+
+    Returns:
+        0 if all checks pass
+        1 if any check fails
+    """
+    logger = logging.getLogger(__name__)
+    checks_passed = 0
+    checks_failed = 0
+
+    print("=== Configuration & Connectivity Health Check ===\n")
+
+    # Check 1: Configuration loaded
+    print("✓ Configuration loaded successfully")
+    if config.config_file:
+        print(f"  → Loaded from: {config.config_file}")
+    else:
+        print("  → Using environment variables only")
+    checks_passed += 1
+
+    # Check 2: Provider and model
+    print(f"✓ Provider: {config.provider}")
+
+    # Get the actual model that will be used
+    model_map = {
+        "openai": config.model or config.openai_model,
+        "anthropic": config.model or config.anthropic_model,
+        "ollama": config.model or config.ollama_model,
+        "openrouter": config.model or config.openrouter_model,
+        "gemini": config.model or config.gemini_model,
+        "cohere": config.model or config.cohere_model,
+        "mistral": config.model or config.mistral_model,
+        "litellm": config.model or config.litellm_model,
+        "llm": config.model or config.llm_model,
+    }
+    selected_model = model_map.get(config.provider, "unknown")
+    print(f"  → Model: {selected_model}")
+    checks_passed += 1
+
+    # Check 3: API Key (for providers that require it)
+    key_validation_map = {
+        "openai": (config.openai_api_key, "OPENAI_API_KEY"),
+        "anthropic": (config.anthropic_api_key, "ANTHROPIC_API_KEY"),
+        "openrouter": (config.openrouter_api_key, "OPENROUTER_API_KEY"),
+        "gemini": (config.google_api_key, "GOOGLE_API_KEY"),
+        "cohere": (config.cohere_api_key, "COHERE_API_KEY"),
+        "mistral": (config.mistral_api_key, "MISTRAL_API_KEY"),
+    }
+
+    if config.provider in key_validation_map:
+        key_value, key_name = key_validation_map[config.provider]
+        if key_value:
+            masked_key = f"{key_value[:8]}...{key_value[-4:]}" if len(key_value) > 12 else "***"
+            print(f"✓ API Key ({key_name}): {masked_key}")
+            checks_passed += 1
+        else:
+            print(f"✗ API Key ({key_name}): NOT SET")
+            print(f"  → Please set {key_name} in your .env file")
+            checks_failed += 1
+    elif config.provider in ("ollama", "llm"):
+        print(f"✓ No API key required for {config.provider}")
+        checks_passed += 1
+    elif config.provider == "litellm":
+        if config.litellm_mode == "http" and config.litellm_api_key:
+            masked_key = f"{config.litellm_api_key[:8]}...{config.litellm_api_key[-4:]}"
+            print(f"✓ API Key (LITELLM_API_KEY): {masked_key}")
+        else:
+            print(f"✓ LiteLLM mode: {config.litellm_mode}")
+        checks_passed += 1
+
+    # Check 4: Connectivity test
+    print(f"\nTesting connectivity to {config.provider}...")
+
+    try:
+        if config.provider == "openai":
+            url = f"{config.openai_base_url}/models"
+            headers = {"Authorization": f"Bearer {config.openai_api_key}"}
+            response = requests.get(url, headers=headers, timeout=5)
+            response.raise_for_status()
+            print(f"✓ Successfully connected to OpenAI API")
+            checks_passed += 1
+
+        elif config.provider == "anthropic":
+            # Anthropic doesn't have a simple health endpoint, so we'll just verify the key format
+            if config.anthropic_api_key and config.anthropic_api_key.startswith("sk-ant-"):
+                print(f"✓ Anthropic API key format valid")
+                print(f"  → Base URL: {config.anthropic_base_url}")
+                checks_passed += 1
+            else:
+                print(f"✗ Anthropic API key format invalid (should start with 'sk-ant-')")
+                checks_failed += 1
+
+        elif config.provider == "ollama":
+            url = f"{config.ollama_base_url}/api/tags"
+            response = requests.get(url, timeout=5)
+            response.raise_for_status()
+            models_data = response.json()
+            available_models = [m["name"] for m in models_data.get("models", [])]
+            print(f"✓ Successfully connected to Ollama")
+            print(f"  → Available models: {', '.join(available_models) if available_models else 'None'}")
+
+            # Check if selected model is available
+            if selected_model in available_models:
+                print(f"  → Model '{selected_model}' is installed")
+                checks_passed += 1
+            else:
+                print(f"✗ Model '{selected_model}' is NOT installed")
+                print(f"  → Run: ollama pull {selected_model}")
+                checks_failed += 1
+
+        elif config.provider == "openrouter":
+            url = f"{config.openrouter_base_url}/models"
+            headers = {"Authorization": f"Bearer {config.openrouter_api_key}"}
+            response = requests.get(url, headers=headers, timeout=5)
+            response.raise_for_status()
+            print(f"✓ Successfully connected to OpenRouter API")
+            checks_passed += 1
+
+        elif config.provider == "gemini":
+            # Test with a simple models list endpoint
+            url = f"{config.gemini_base_url}/models?key={config.google_api_key}"
+            response = requests.get(url, timeout=5)
+            response.raise_for_status()
+            print(f"✓ Successfully connected to Google Gemini API")
+            checks_passed += 1
+
+        elif config.provider == "cohere":
+            url = f"{config.cohere_base_url}/check-api-key"
+            headers = {"Authorization": f"Bearer {config.cohere_api_key}"}
+            response = requests.post(url, headers=headers, timeout=5)
+            if response.status_code in (200, 401):  # 401 means key is wrong but endpoint is reachable
+                print(f"✓ Successfully connected to Cohere API")
+                checks_passed += 1
+            else:
+                print(f"✗ Failed to connect to Cohere API")
+                checks_failed += 1
+
+        elif config.provider == "mistral":
+            url = f"{config.mistral_base_url}/models"
+            headers = {"Authorization": f"Bearer {config.mistral_api_key}"}
+            response = requests.get(url, headers=headers, timeout=5)
+            response.raise_for_status()
+            print(f"✓ Successfully connected to Mistral AI API")
+            checks_passed += 1
+
+        elif config.provider == "litellm":
+            if config.litellm_mode == "http":
+                url = f"{config.litellm_base_url}/health"
+                response = requests.get(url, timeout=5)
+                if response.status_code == 200:
+                    print(f"✓ Successfully connected to LiteLLM proxy")
+                    checks_passed += 1
+                else:
+                    print(f"✗ LiteLLM proxy not responding")
+                    checks_failed += 1
+            elif config.litellm_mode == "python":
+                try:
+                    import litellm
+                    print(f"✓ LiteLLM Python package available")
+                    checks_passed += 1
+                except ImportError:
+                    print(f"✗ LiteLLM Python package not installed")
+                    print(f"  → Run: pip install litellm")
+                    checks_failed += 1
+            elif config.litellm_mode == "cli":
+                result = subprocess.run(["litellm", "--version"], capture_output=True, text=True)
+                if result.returncode == 0:
+                    print(f"✓ LiteLLM CLI available")
+                    checks_passed += 1
+                else:
+                    print(f"✗ LiteLLM CLI not found")
+                    print(f"  → Run: pip install litellm")
+                    checks_failed += 1
+
+        elif config.provider == "llm":
+            result = subprocess.run(["llm", "--version"], capture_output=True, text=True)
+            if result.returncode == 0:
+                print(f"✓ LLM CLI available")
+                print(f"  → Version: {result.stdout.strip()}")
+                checks_passed += 1
+            else:
+                print(f"✗ LLM CLI not found")
+                print(f"  → Run: pip install llm")
+                checks_failed += 1
+
+    except requests.exceptions.ConnectionError as e:
+        print(f"✗ Connection failed: {str(e)}")
+        print(f"  → Check your internet connection and firewall settings")
+        checks_failed += 1
+    except requests.exceptions.Timeout:
+        print(f"✗ Connection timeout")
+        print(f"  → The service may be slow or unreachable")
+        checks_failed += 1
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code in (401, 403):
+            print(f"✗ Authentication failed (HTTP {e.response.status_code})")
+            print(f"  → Check your API key")
+        else:
+            print(f"✗ HTTP error: {e.response.status_code}")
+        checks_failed += 1
+    except Exception as e:
+        print(f"✗ Unexpected error: {str(e)}")
+        checks_failed += 1
+
+    # Summary
+    print(f"\n=== Summary ===")
+    print(f"Checks passed: {checks_passed}")
+    print(f"Checks failed: {checks_failed}")
+
+    if checks_failed == 0:
+        print(f"\n✓ All checks passed! Your configuration is ready to use.")
+        return 0
+    else:
+        print(f"\n✗ Some checks failed. Please fix the issues above.")
+        return 1
 
 
 def main():
@@ -870,9 +1312,13 @@ Configuration:
         help='AI provider to use (overrides DEFAULT_AI_PROVIDER in .env)'
     )
     parser.add_argument('--model', help='Model to use (overrides provider-specific model in .env)')
+    parser.add_argument('--health-check', action='store_true', help='Verify configuration and connectivity without making API calls')
+    parser.add_argument('--validate-config', action='store_true', help='Validate configuration file syntax and required variables')
+    parser.add_argument('--dry-run', action='store_true', help='Show what would be sent to AI and estimate cost without making the API call')
+    parser.add_argument('--version', '-v', action='version', version=f'git-ai-summary {__version__}')
 
     args = parser.parse_args()
-    
+
     # Initialize logging
     try:
         config = load_config(provider=args.provider, model=args.model)
@@ -888,6 +1334,14 @@ Configuration:
     except ValueError as e:
         print(f"Configuration error: {e}", file=sys.stderr)
         sys.exit(1)
+
+    # Handle --validate-config flag
+    if args.validate_config:
+        sys.exit(validate_config(config))
+
+    # Handle --health-check flag
+    if args.health_check:
+        sys.exit(health_check(config))
     
     # Auto-detect sync point if not specified
     since_ref = args.since if args.since else get_recent_sync_point()
@@ -901,9 +1355,57 @@ Configuration:
         return
     
     print(f"Found {len(commits)} commits to analyze.", file=sys.stderr)
-    
+
     user_prompt = create_ai_prompt(commits, args.focus)
-    
+
+    # Handle --dry-run mode
+    if args.dry_run:
+        print("\n=== DRY RUN MODE ===\n", file=sys.stderr)
+        print(f"Provider: {config.provider}", file=sys.stderr)
+
+        # Get the model that will be used
+        model_map = {
+            "openai": config.model or config.openai_model,
+            "anthropic": config.model or config.anthropic_model,
+            "ollama": config.model or config.ollama_model,
+            "openrouter": config.model or config.openrouter_model,
+            "gemini": config.model or config.gemini_model,
+            "cohere": config.model or config.cohere_model,
+            "mistral": config.model or config.mistral_model,
+            "litellm": config.model or config.litellm_model,
+            "llm": config.model or config.llm_model,
+        }
+        selected_model = model_map.get(config.provider, "unknown")
+        print(f"Model: {selected_model}", file=sys.stderr)
+
+        # Estimate token count and cost
+        system_prompt = "You are a helpful AI assistant analyzing git commits."
+        input_tokens = estimate_token_count(system_prompt + "\n\n" + user_prompt)
+        estimated_output_tokens = 500  # Rough estimate for typical analysis
+
+        cost_info = estimate_cost(config.provider, selected_model, input_tokens, estimated_output_tokens)
+
+        print(f"\nEstimated token count:", file=sys.stderr)
+        print(f"  Input tokens: {cost_info['input_tokens']:,}", file=sys.stderr)
+        print(f"  Output tokens (estimated): {cost_info['output_tokens']:,}", file=sys.stderr)
+
+        if cost_info['pricing_available']:
+            print(f"\nEstimated cost:", file=sys.stderr)
+            print(f"  Input: ${cost_info['input_cost']:.6f}", file=sys.stderr)
+            print(f"  Output: ${cost_info['output_cost']:.6f}", file=sys.stderr)
+            print(f"  Total: ${cost_info['total_cost']:.6f} {cost_info['currency']}", file=sys.stderr)
+        else:
+            print(f"\n⚠ Pricing data not available for model '{selected_model}'", file=sys.stderr)
+            if config.provider in ("ollama", "llm", "litellm"):
+                print(f"  (No cost - using local or proxy provider)", file=sys.stderr)
+
+        print(f"\nPrompt length: {len(user_prompt):,} characters", file=sys.stderr)
+        print(f"\n{'='*60}", file=sys.stderr)
+        print("Prompt that would be sent to AI:", file=sys.stderr)
+        print(f"{'='*60}\n", file=sys.stderr)
+        print(user_prompt)
+        return
+
     # Copy prompt to clipboard if requested (for manual AI input)
     if args.copy:
         try:
