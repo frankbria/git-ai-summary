@@ -1,5 +1,7 @@
 # Git AI Summary
 
+[![Follow on X](https://img.shields.io/twitter/follow/FrankBria18044?style=social)](https://x.com/FrankBria18044)
+
 Analyze recent git changes using AI providers of your choice. Supports multiple AI providers including OpenAI, Anthropic Claude, local Ollama, OpenRouter, Google Gemini, Cohere, Mistral AI, LiteLLM, and LLM CLI.
 
 ## Features
